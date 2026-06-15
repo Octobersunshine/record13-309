@@ -5,6 +5,10 @@ from urllib.parse import urlparse
 
 app = Flask(__name__)
 
+DEFAULT_TIMEOUT = 10
+MIN_TIMEOUT = 1
+MAX_TIMEOUT = 30
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
@@ -16,6 +20,14 @@ def is_valid_url(url: str) -> bool:
         return all([result.scheme, result.netloc])
     except Exception:
         return False
+
+
+def parse_timeout(timeout_param: str) -> float:
+    try:
+        timeout = float(timeout_param)
+    except (ValueError, TypeError):
+        return DEFAULT_TIMEOUT
+    return max(MIN_TIMEOUT, min(timeout, MAX_TIMEOUT))
 
 
 def extract_title(html: str) -> str:
@@ -41,6 +53,7 @@ def extract_title(html: str) -> str:
 @app.route("/get-title", methods=["GET"])
 def get_title():
     url = request.args.get("url")
+    timeout_param = request.args.get("timeout")
 
     if not url:
         return jsonify({"success": False, "error": "Missing 'url' parameter"}), 400
@@ -48,8 +61,15 @@ def get_title():
     if not is_valid_url(url):
         return jsonify({"success": False, "error": "Invalid URL format"}), 400
 
+    timeout = parse_timeout(timeout_param)
+
     try:
-        response = requests.get(url, headers=HEADERS, timeout=10, allow_redirects=True)
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=timeout,
+            allow_redirects=True
+        )
         response.raise_for_status()
 
         if not response.encoding or response.encoding.lower() == "iso-8859-1":
@@ -64,11 +84,12 @@ def get_title():
             "success": True,
             "url": url,
             "title": title,
-            "status_code": response.status_code
+            "status_code": response.status_code,
+            "timeout_used": timeout
         })
 
     except requests.exceptions.Timeout:
-        return jsonify({"success": False, "error": "Request timed out"}), 504
+        return jsonify({"success": False, "error": "Request timed out", "timeout_used": timeout}), 504
     except requests.exceptions.ConnectionError:
         return jsonify({"success": False, "error": "Connection error"}), 502
     except requests.exceptions.HTTPError as e:
